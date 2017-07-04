@@ -53,7 +53,7 @@ def load_image(path: Path, size: Size, cache: bool):
     if not cached_path.parent.exists():
         cached_path.parent.mkdir()
     if cached_path.exists():
-        return Image.open(str(cached_path))
+        return utils.load_image(cached_path)
     else:
         image = utils.load_image(path)
         image = image.resize(size, resample=Image.BILINEAR)
