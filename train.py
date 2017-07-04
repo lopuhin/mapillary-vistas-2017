@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import gzip
 from pathlib import Path
 import shutil
 from typing import Dict, List, Tuple
@@ -31,9 +32,9 @@ class StreetDataset(Dataset):
         mask_paths = sorted(root.joinpath('labels').glob('*.png'))
         if limit:
             image_paths, mask_paths = image_paths[:limit], mask_paths[:limit]
-        self.images = {p.stem: load_image(p, size=size)
+        self.images = {p.stem: load_image(p, size=size, cache=True)
                        for p in tqdm.tqdm(image_paths, desc='Images')}
-        self.masks = {p.stem: load_mask(p, size=size)
+        self.masks = {p.stem: load_mask(p, size=size, cache=True)
                       for p in tqdm.tqdm(mask_paths, desc='Masks')}
         self.keys = list(self.images)
 
@@ -47,15 +48,35 @@ class StreetDataset(Dataset):
         return utils.img_transform(img), torch.from_numpy(mask)
 
 
-def load_image(path: Path, size: Size):
-    image = utils.load_image(path)
-    return image.resize(size, resample=Image.BILINEAR)
+def load_image(path: Path, size: Size, cache: bool):
+    cached_path = path.parent / '{}-{}'.format(*size) / '{}.jpg'.format(path.stem)
+    if not cached_path.parent.exists():
+        cached_path.parent.mkdir()
+    if cached_path.exists():
+        return Image.open(str(cached_path))
+    else:
+        image = utils.load_image(path)
+        image = image.resize(size, resample=Image.BILINEAR)
+        if cache:
+            image.save(str(cached_path))
+        return image
 
 
-def load_mask(path: Path, size: Size):
-    image = Image.open(path)
-    return np.array(image.resize(size, resample=Image.NEAREST),
-                    dtype=np.int64)
+def load_mask(path: Path, size: Size, cache: bool):
+    cached_path = path.parent / '{}-{}'.format(*size) / '{}.npy'.format(path.stem)
+    if not cached_path.parent.exists():
+        cached_path.parent.mkdir()
+    if cached_path.exists():
+        with gzip.open(str(cached_path), 'rb') as f:
+            return np.load(f)
+    else:
+        mask = Image.open(path)
+        mask = np.array(mask.resize(size, resample=Image.NEAREST),
+                        dtype=np.int64)
+        if cache:
+            with gzip.open(str(cached_path), 'wb') as f:
+                np.save(f, mask)
+        return mask
 
 
 def validation(model: nn.Module, criterion, valid_loader) -> Dict[str, float]:
@@ -171,8 +192,7 @@ def main():
     model = utils.cuda(model)
     loss = Loss(dice_weight=args.dice_weight)
 
-   #size = (960, 640)
-    size = (480, 320)
+    size = (960, 640)
     if args.limit:
         limit = args.limit
         valid_limit = limit // 5
