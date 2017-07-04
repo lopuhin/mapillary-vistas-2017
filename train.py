@@ -192,7 +192,7 @@ def main():
     model = utils.cuda(model)
     loss = Loss(dice_weight=args.dice_weight)
 
-    size = (960, 640)
+    size = (768, 512)
     if args.limit:
         limit = args.limit
         valid_limit = limit // 5
@@ -225,7 +225,7 @@ def main():
             valid_loader=valid_loader,
             validation=validation,
             save_predictions=save_predictions,
-            patience=4,
+            patience=2,
         )
 
     elif args.mode == 'valid':
