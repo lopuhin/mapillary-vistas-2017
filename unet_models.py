@@ -15,10 +15,10 @@ def concat(xs):
 
 
 class Conv3BN(nn.Module):
-    def __init__(self, in_: int, out: int):
+    def __init__(self, in_: int, out: int, bn=False):
         super().__init__()
         self.conv = conv3x3(in_, out)
-        self.bn = nn.BatchNorm2d(out)
+        self.bn = nn.BatchNorm2d(out) if bn else None
         self.activation = nn.ReLU(inplace=True)
 
     def forward(self, x):
