@@ -28,23 +28,19 @@ Size = Tuple[int, int]
 
 class StreetDataset(Dataset):
     def __init__(self, root: Path, size: Size, limit=None):
-        image_paths = sorted(root.joinpath('images').glob('*.jpg'))
-        mask_paths = sorted(root.joinpath('labels').glob('*.png'))
+        self.image_paths = sorted(root.joinpath('images').glob('*.jpg'))
+        self.mask_paths = sorted(root.joinpath('labels').glob('*.png'))
         if limit:
-            image_paths, mask_paths = image_paths[:limit], mask_paths[:limit]
-        self.images = {p.stem: load_image(p, size=size, cache=True)
-                       for p in tqdm.tqdm(image_paths, desc='Images')}
-        self.masks = {p.stem: load_mask(p, size=size, cache=True)
-                      for p in tqdm.tqdm(mask_paths, desc='Masks')}
-        self.keys = list(self.images)
+            self.image_paths = self.image_paths[:limit],
+            self.mask_paths = self.mask_paths[:limit]
+        self.size = size
 
     def __len__(self):
-        return len(self.keys)
+        return len(self.image_paths)
 
     def __getitem__(self, idx):
-        key = self.keys[idx]
-        img = self.images[key]
-        mask = self.masks[key]
+        img = load_image(self.image_paths[idx], size=self.size, cache=True)
+        mask = load_mask(self.mask_paths[idx], size=self.size, cache=True)
         return utils.img_transform(img), torch.from_numpy(mask)
 
 
