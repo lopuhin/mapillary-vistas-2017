@@ -39,26 +39,29 @@ class StreetDataset(Dataset):
         return len(self.image_paths)
 
     def __getitem__(self, idx):
-        img = load_image(self.image_paths[idx], size=self.size, cache=True)
-        mask = load_mask(self.mask_paths[idx], size=self.size, cache=True)
+        img = load_image(self.image_paths[idx], size=self.size)
+        mask = load_mask(self.mask_paths[idx], size=self.size)
         return utils.img_transform(img), torch.from_numpy(mask)
 
 
-def load_image(path: Path, size: Size, cache: bool):
+def load_image(path: Path, size: Size, with_size: bool=False):
     cached_path = path.parent / '{}-{}'.format(*size) / '{}.jpg'.format(path.stem)
     if not cached_path.parent.exists():
         cached_path.parent.mkdir()
     if cached_path.exists():
-        return utils.load_image(cached_path)
+        image = utils.load_image(cached_path)
     else:
         image = utils.load_image(path)
         image = image.resize(size, resample=Image.BILINEAR)
-        if cache:
-            image.save(str(cached_path))
+        image.save(str(cached_path))
+    if with_size:
+        size = Image.open(str(path)).size
+        return image, size
+    else:
         return image
 
 
-def load_mask(path: Path, size: Size, cache: bool):
+def load_mask(path: Path, size: Size):
     cached_path = path.parent / '{}-{}'.format(*size) / '{}.npy'.format(path.stem)
     if not cached_path.parent.exists():
         cached_path.parent.mkdir()
@@ -69,9 +72,8 @@ def load_mask(path: Path, size: Size, cache: bool):
         mask = Image.open(path)
         mask = np.array(mask.resize(size, resample=Image.NEAREST),
                         dtype=np.int64)
-        if cache:
-            with gzip.open(str(cached_path), 'wb') as f:
-                np.save(f, mask)
+        with gzip.open(str(cached_path), 'wb') as f:
+            np.save(f, mask)
         return mask
 
 
@@ -94,8 +96,8 @@ def validation(model: nn.Module, criterion, valid_loader) -> Dict[str, float]:
 
 
 class PredictionDataset:
-    def __init__(self, paths: List[Path], size: Size):
-        self.paths = paths
+    def __init__(self, root: Path, size: Size):
+        self.paths = list(sorted(root.joinpath('images').glob('*.jpg')))
         self.size = size
 
     def __len__(self):
@@ -103,8 +105,8 @@ class PredictionDataset:
 
     def __getitem__(self, idx):
         path = self.paths[idx % len(self.paths)]
-        image = load_image(path, self.size)
-        return utils.img_transform(image), path.stem
+        image, size = load_image(path, self.size, with_size=True)
+        return utils.img_transform(image), (path.stem, list(size))
 
 
 def save_predictions(root: Path, n: int, inputs, targets, outputs):
@@ -165,12 +167,35 @@ def predict(model, root: Path, size: Size, out_path: Path, batch_size: int):
         num_workers=2,
     )
     model.eval()
-    all_outputs = []
-    all_stems = []
-    for inputs, stems in tqdm.tqdm(loader, desc='Predict'):
+    out_path.mkdir(exist_ok=True)
+    for inputs, (stems, sizes) in tqdm.tqdm(loader, desc='Predict'):
         inputs = utils.variable(inputs, volatile=True)
-        outputs = F.softmax(model(inputs))
-        assert False  # TODO
+        outputs = np.exp(model(inputs).data.cpu().numpy())
+        for output, stem, width, height in zip(outputs, stems, *sizes):
+            save_mask(output.argmax(axis=0).astype(np.uint8),
+                      size=(width, height),
+                      path=out_path / '{}.png'.format(stem))
+
+
+_palette = None
+
+
+def get_palette():
+    global _palette
+    if _palette is None:
+        mask = Image.open(
+            str(next((utils.DATA_ROOT / 'training' / 'labels').glob('*.png'))))
+        _palette = mask.getpalette()
+    return _palette
+
+
+def save_mask(data: np.ndarray, size: Size, path: Path):
+    assert data.dtype == np.uint8
+    h, w = data.shape
+    mask_img = Image.frombuffer('P', (w, h), data, 'raw', 'P', 0, 1)
+    mask_img.putpalette(get_palette())
+    mask_img = mask_img.resize(size, resample=Image.NEAREST)
+    mask_img.save(str(path))
 
 
 def main():
@@ -232,14 +257,14 @@ def main():
 
     elif args.mode == 'predict_valid':
         utils.load_best_model(model, root)
-        predict(model, valid_root, out_path=root / 'valid.csv',
-                batch_size=args.batch_size)
+        predict(model, valid_root, out_path=root / 'validation',
+                size=size, batch_size=args.batch_size)
 
     elif args.mode == 'predict_test':
         utils.load_best_model(model, root)
         test_root = utils.DATA_ROOT / 'testing'
-        predict(model, test_root, out_path=root / 'test.csv',
-                batch_size=args.batch_size)
+        predict(model, test_root, out_path=root / 'testing',
+                size=size, batch_size=args.batch_size)
 
 
 if __name__ == '__main__':
