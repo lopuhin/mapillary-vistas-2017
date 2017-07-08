@@ -30,7 +30,7 @@ class StreetDataset(Dataset):
         self.image_paths = sorted(root.joinpath('images').glob('*.jpg'))
         self.mask_paths = sorted(root.joinpath('labels').glob('*.png'))
         if limit:
-            self.image_paths = self.image_paths[:limit],
+            self.image_paths = self.image_paths[:limit]
             self.mask_paths = self.mask_paths[:limit]
         self.size = size
 
@@ -241,6 +241,8 @@ def main():
     arg('--limit', type=int, help='use only N images for valid/train')
     arg('--dice-weight', type=float, default=0.0)
     arg('--device-ids', type=str, help='For example 0,1 to run on two GPUs')
+    arg('--size', type=str, default='768x512',
+        help='Input size, for example 768x512. Must be multiples of 32')
     utils.add_args(parser)
     args = parser.parse_args()
 
@@ -253,7 +255,11 @@ def main():
     model = nn.DataParallel(model, device_ids=device_ids).cuda()
     loss = Loss(dice_weight=args.dice_weight)
 
-    size = (768, 512)
+    w, h = map(int, args.size.split('x'))
+    if not (w % 32 == 0 and h % 32 == 0):
+        parser.error('Wrong --size: both dimentions should be multiples of 32')
+    size = (w, h)
+
     if args.limit:
         limit = args.limit
         valid_limit = limit // 5
