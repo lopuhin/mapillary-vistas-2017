@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 import argparse
 import json
-from functools import partial
 import gzip
 from pathlib import Path
 import shutil
-import multiprocessing.pool
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 import warnings
 
 import numpy as np
@@ -15,7 +13,6 @@ import skimage.io
 import skimage.exposure
 import torch
 from torch import nn
-from torch.nn import functional as F
 from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset
 import tqdm
