@@ -240,12 +240,17 @@ def main():
         default='train')
     arg('--limit', type=int, help='use only N images for valid/train')
     arg('--dice-weight', type=float, default=0.0)
+    arg('--device-ids', type=str, help='For example 0,1 to run on two GPUs')
     utils.add_args(parser)
     args = parser.parse_args()
 
     root = Path(args.root)
     model = UNet()
-    model = utils.cuda(model)
+    if args.device_ids:
+        device_ids = list(map(int, args.device_ids.split(',')))
+    else:
+        device_ids = None
+    model = nn.DataParallel(model, device_ids=device_ids).cuda()
     loss = Loss(dice_weight=args.dice_weight)
 
     size = (768, 512)
