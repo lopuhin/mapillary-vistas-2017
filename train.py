@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import argparse
 import json
+from functools import partial
 import gzip
 from pathlib import Path
 import shutil
+import multiprocessing.pool
 from typing import Dict, List, Tuple
 import warnings
 
@@ -80,19 +82,55 @@ def load_mask(path: Path, size: Size):
 def validation(model: nn.Module, criterion, valid_loader) -> Dict[str, float]:
     model.eval()
     losses = []
-    iou_scores = []
+    confusion_matrix = np.zeros(
+        (dataset.N_CLASSES, dataset.N_CLASSES), dtype=np.uint32)
     for inputs, targets in valid_loader:
         inputs = utils.variable(inputs, volatile=True)
         targets = utils.variable(targets)
         outputs = model(inputs)
         loss = criterion(outputs, targets)
         losses.append(loss.data[0])
-        continue
-        # TODO - IOU
-        output_probs = F.softmax(outputs).data.cpu().numpy()
+        output_classes = outputs.data.cpu().numpy().argmax(axis=1)
+        target_classes = targets.data.cpu().numpy()
+        confusion_matrix += calculate_confusion_matrix_from_arrays(
+            output_classes, target_classes, dataset.N_CLASSES)
     valid_loss = np.mean(losses)  # type: float
-    print('Valid loss: {:.4f}'.format(valid_loss))
-    return {'valid_loss': valid_loss}
+    ious = {'iou_{}'.format(cls): iou
+            for cls, iou in enumerate(calculate_iou(confusion_matrix))}
+    average_iou = np.mean(list(ious.values()))
+    print('Valid loss: {:.4f}, average IoU: {:.4f}'.format(valid_loss, average_iou))
+    metrics = {'valid_loss': valid_loss, 'iou': average_iou}
+    metrics.update(ious)
+    return metrics
+
+
+def calculate_confusion_matrix_from_arrays(prediction, ground_truth, nr_labels):
+    replace_indices = np.vstack((
+        ground_truth.flatten(),
+        prediction.flatten())
+    ).T
+    confusion_matrix, _ = np.histogramdd(
+        replace_indices,
+        bins=(nr_labels, nr_labels),
+        range=[(0, nr_labels), (0, nr_labels)]
+    )
+    confusion_matrix = confusion_matrix.astype(np.uint32)
+    return confusion_matrix
+
+
+def calculate_iou(confusion_matrix):
+    ious = []
+    for index in range(confusion_matrix.shape[0]):
+        true_positives = confusion_matrix[index, index]
+        false_positives = confusion_matrix[:, index].sum() - true_positives
+        false_negatives = confusion_matrix[index, :].sum() - true_positives
+        denom = true_positives + false_positives + false_negatives
+        if denom == 0:
+            iou = 0
+        else:
+            iou = float(true_positives) / denom
+        ious.append(iou)
+    return ious
 
 
 class PredictionDataset:
