@@ -6,6 +6,7 @@ from torch import nn
 from torch.nn import functional as F
 
 import dataset
+import utils
 
 
 def conv3x3(in_, out):
@@ -142,7 +143,8 @@ class UNet2Scaled(nn.Module):
 class Loss:
     def __init__(self, dice_weight=0.0, class_weights=None):
         if class_weights is not None:
-            nll_weight = torch.from_numpy(class_weights.astype(np.float32))
+            nll_weight = utils.cuda(
+                torch.from_numpy(class_weights.astype(np.float32)))
         else:
             nll_weight = None
         self.nll_loss = nn.NLLLoss2d(weight=nll_weight)

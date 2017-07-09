@@ -255,6 +255,13 @@ def main():
         model = getattr(unet_models, args.model)()
     else:
         model = UNet()
+
+    w, h = map(int, args.size.split('x'))
+    if not (w % 32 == 0 and h % 32 == 0):
+        parser.error('Wrong --size: both dimensions should be multiples of 32')
+    size = (w, h)
+    out_size = (w // model.output_downscaled, h // model.output_downscaled)
+
     if utils.cuda_is_available:
         if args.device_ids:
             device_ids = list(map(int, args.device_ids.split(',')))
@@ -269,12 +276,6 @@ def main():
     else:
         class_weighs = None
     loss = Loss(dice_weight=args.dice_weight, class_weights=class_weighs)
-
-    w, h = map(int, args.size.split('x'))
-    if not (w % 32 == 0 and h % 32 == 0):
-        parser.error('Wrong --size: both dimensions should be multiples of 32')
-    size = (w, h)
-    out_size = (w // model.output_downscaled, h // model.output_downscaled)
 
     if args.limit:
         limit = args.limit
