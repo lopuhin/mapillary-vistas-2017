@@ -270,9 +270,10 @@ def main():
         model = nn.DataParallel(model, device_ids=device_ids).cuda()
 
     if args.nll_weights:
-        class_weighs = np.array(
-            [1 / ratio for cls, ratio in dataset.CLS_RATIOS.items()])
+        class_weighs = np.sqrt(np.array(
+            [1 / ratio for cls, ratio in dataset.CLS_RATIOS.items()]))
         class_weighs /= class_weighs.sum()
+
     else:
         class_weighs = None
     loss = Loss(dice_weight=args.dice_weight, class_weights=class_weighs)
