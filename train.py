@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader, Dataset
 import tqdm
 
 import dataset
+import unet_models
 from unet_models import UNet, Loss
 import utils
 
@@ -26,20 +27,21 @@ Size = Tuple[int, int]
 
 
 class StreetDataset(Dataset):
-    def __init__(self, root: Path, size: Size, limit=None):
+    def __init__(self, root: Path, size: Size, out_size=None, limit=None):
         self.image_paths = sorted(root.joinpath('images').glob('*.jpg'))
         self.mask_paths = sorted(root.joinpath('labels').glob('*.png'))
         if limit:
             self.image_paths = self.image_paths[:limit]
             self.mask_paths = self.mask_paths[:limit]
         self.size = size
+        self.out_size = out_size or size
 
     def __len__(self):
         return len(self.image_paths)
 
     def __getitem__(self, idx):
         img = load_image(self.image_paths[idx], size=self.size)
-        mask = load_mask(self.mask_paths[idx], size=self.size)
+        mask = load_mask(self.mask_paths[idx], size=self.out_size)
         return utils.img_transform(img), torch.from_numpy(mask)
 
 
@@ -240,25 +242,39 @@ def main():
         default='train')
     arg('--limit', type=int, help='use only N images for valid/train')
     arg('--dice-weight', type=float, default=0.0)
+    arg('--nll-weights', action='store_true')
     arg('--device-ids', type=str, help='For example 0,1 to run on two GPUs')
     arg('--size', type=str, default='768x512',
         help='Input size, for example 768x512. Must be multiples of 32')
+    arg('--model')
     utils.add_args(parser)
     args = parser.parse_args()
 
     root = Path(args.root)
-    model = UNet()
-    if args.device_ids:
-        device_ids = list(map(int, args.device_ids.split(',')))
+    if args.model:
+        model = getattr(unet_models, args.model)()
     else:
-        device_ids = None
-    model = nn.DataParallel(model, device_ids=device_ids).cuda()
-    loss = Loss(dice_weight=args.dice_weight)
+        model = UNet()
+    if utils.cuda_is_available:
+        if args.device_ids:
+            device_ids = list(map(int, args.device_ids.split(',')))
+        else:
+            device_ids = None
+        model = nn.DataParallel(model, device_ids=device_ids).cuda()
+
+    if args.nll_weights:
+        class_weighs = np.array(
+            [1 / ratio for cls, ratio in dataset.CLS_RATIOS.items()])
+        class_weighs /= class_weighs.sum()
+    else:
+        class_weighs = None
+    loss = Loss(dice_weight=args.dice_weight, class_weights=class_weighs)
 
     w, h = map(int, args.size.split('x'))
     if not (w % 32 == 0 and h % 32 == 0):
-        parser.error('Wrong --size: both dimentions should be multiples of 32')
+        parser.error('Wrong --size: both dimensions should be multiples of 32')
     size = (w, h)
+    out_size = (w // model.output_downscaled, h // model.output_downscaled)
 
     if args.limit:
         limit = args.limit
@@ -268,7 +284,7 @@ def main():
 
     def make_loader(ds_root: Path, limit_: int):
         return DataLoader(
-            dataset=StreetDataset(ds_root, size, limit=limit_),
+            dataset=StreetDataset(ds_root, size, out_size=out_size, limit=limit_),
             shuffle=True,
             num_workers=args.workers,
             batch_size=args.batch_size,

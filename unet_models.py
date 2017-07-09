@@ -1,8 +1,10 @@
+from functools import partial
+
+import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
 
-import utils
 import dataset
 
 
@@ -42,21 +44,28 @@ class UNetModule(nn.Module):
 
 
 class UNet(nn.Module):
+    output_downscaled = 1
     module = UNetModule
 
     def __init__(self,
                  input_channels: int=3,
                  filters_base: int=32,
-                 filter_factors=(1, 2, 4, 8, 16)):
+                 down_filter_factors=(1, 2, 4, 8, 16),
+                 up_filter_factors=(1, 2, 4, 8, 16),
+                 bottom_s=4,
+                 add_output=True):
         super().__init__()
-        filter_sizes = [filters_base * s for s in filter_factors]
+        assert len(down_filter_factors) == len(up_filter_factors)
+        assert down_filter_factors[-1] == up_filter_factors[-1]
+        down_filter_sizes = [filters_base * s for s in down_filter_factors]
+        up_filter_sizes = [filters_base * s for s in up_filter_factors]
         self.down, self.up = nn.ModuleList(), nn.ModuleList()
-        for i, nf in enumerate(filter_sizes):
-            low_nf = input_channels if i == 0 else filter_sizes[i - 1]
-            self.down.append(self.module(low_nf, nf))
-            if i != 0:
-                self.up.append(self.module(low_nf + nf, low_nf))
-        bottom_s = 4
+        self.down.append(self.module(input_channels, down_filter_sizes[0]))
+        for prev_i, nf in enumerate(down_filter_sizes[1:]):
+            self.down.append(self.module(down_filter_sizes[prev_i], nf))
+        for prev_i, nf in enumerate(up_filter_sizes[1:]):
+            self.up.append(self.module(
+                down_filter_sizes[prev_i] + nf, up_filter_sizes[prev_i]))
         pool = nn.MaxPool2d(2, 2)
         pool_bottom = nn.MaxPool2d(bottom_s, bottom_s)
         upsample = nn.UpsamplingNearest2d(scale_factor=2)
@@ -65,7 +74,9 @@ class UNet(nn.Module):
         self.downsamplers[-1] = pool_bottom
         self.upsamplers = [upsample] * len(self.up)
         self.upsamplers[-1] = upsample_bottom
-        self.conv_final = nn.Conv2d(filter_sizes[0], dataset.N_CLASSES, 1)
+        self.add_output = add_output
+        if add_output:
+            self.conv_final = nn.Conv2d(up_filter_sizes[0], dataset.N_CLASSES, 1)
 
     def forward(self, x):
         xs = []
@@ -80,13 +91,61 @@ class UNet(nn.Module):
             x_out = upsample(x_out)
             x_out = up(concat([x_out, x_skip]))
 
-        x_out = self.conv_final(x_out)
-        return F.log_softmax(x_out)
+        if self.add_output:
+            x_out = self.conv_final(x_out)
+            x_out = F.log_softmax(x_out)
+        return x_out
+
+
+UNet2 = partial(
+    UNet,
+    down_filter_factors=(1, 2, 4, 8, 16),
+    up_filter_factors=(2, 2, 4, 8, 16),
+)
+
+
+class UNet2Scaled(nn.Module):
+    output_downscaled = 2
+    filters_base = 32
+    unet_filters_base = 2 * filters_base
+    down_filter_factors = [1, 2, 4, 8]
+    up_filter_factors = [2, 2, 4, 8]
+
+    def __init__(self):
+        super().__init__()
+        b = self.filters_base
+        self.head = nn.Sequential(
+            Conv3BN(3, b),
+            Conv3BN(b, b),
+            nn.MaxPool2d(2, 2),
+        )
+        self.unet = UNet(
+            input_channels=b,
+            filters_base=self.unet_filters_base,
+            up_filter_factors=self.up_filter_factors,
+            down_filter_factors=self.down_filter_factors,
+            bottom_s=2,
+            add_output=False,
+        )
+        self.output = nn.Sequential(
+            Conv3BN(b * 4, b * 4),
+            nn.Conv2d(b * 4, dataset.N_CLASSES, 1),
+        )
+
+    def forward(self, x):
+        x = self.head(x)
+        x = self.unet(x)
+        x = self.output(x)
+        return F.log_softmax(x)
 
 
 class Loss:
-    def __init__(self, dice_weight=0.0):
-        self.nll_loss = nn.NLLLoss2d()
+    def __init__(self, dice_weight=0.0, class_weights=None):
+        if class_weights is not None:
+            nll_weight = torch.from_numpy(class_weights.astype(np.float32))
+        else:
+            nll_weight = None
+        self.nll_loss = nn.NLLLoss2d(weight=nll_weight)
         self.dice_weight = dice_weight
 
     def __call__(self, outputs, targets):
