@@ -202,7 +202,7 @@ def imap_fixed_output_buffer(fn, it, threads: int):
 
 
 def plot(*args, ymin=None, ymax=None, xmin=None, xmax=None, params=False,
-         max_points=200):
+         max_points=200, legend=True):
     """ Use in the notebook like this:
     plot('./runs/oc2', './runs/oc1', 'loss', 'valid_loss')
     """
@@ -254,4 +254,5 @@ def plot(*args, ymin=None, ymax=None, xmin=None, xmax=None, params=False,
                     ys = [np.mean(ys[idx: indices[i + 1]])
                           for i, idx in enumerate(indices[:-1])]
                 plt.plot(xs, ys, label='{}: {}'.format(path, key))
-    plt.legend()
+    if legend:
+        plt.legend()
