@@ -119,7 +119,7 @@ def train(args, model: nn.Module, criterion, *, train_loader, valid_loader,
     }, str(model_path))
 
     report_each = 10
-    save_prediction_each = report_each * 10
+    save_prediction_each = report_each * 20
     log = root.joinpath('train.log').open('at', encoding='utf8')
     valid_losses = []
     lr_reset_epoch = epoch
